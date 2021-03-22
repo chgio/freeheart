@@ -1,13 +1,8 @@
 #include <mbed.h>
+#include <numeric>
 #include <array>
-#include <deque>
-#include <dsp.h>
 #include <tsi_sensor.h>
 #include <max7219.h>
-
-std::deque<float> edge;
-std::array<float, size> processing;
-std::array<int, size> processed;
 
 char buffer[64] = {0};
 BufferedSerial serial(USBTX, USBRX);
@@ -19,30 +14,77 @@ DigitalOut timetestPin(PTC1); // digital pin
 TSIAnalogSlider slider(PTB16, PTB17, 16);
 Max7219 display(PTD2, NC, PTD1, PTD0);
 
+volatile float v;
 
-// TODO verify consistency of front/back queuing with dsp iterators
+const float alpha = 0.025;
+volatile float vLag;
+
+unsigned long counter = 0;
+float offset;
+float rollingAvg;
+volatile float vNorm;
+
+float vMin, vMax;
+volatile float vDisc;
+
 
 // sampling interrupt handler function
 void sampler()
 {
   timetestPin = 1;
-  float v = sensorPin.read();
+  v = sensorPin.read();
   timetestPin = 0;
+
   printf("read:\t%f\n",
     v
   );
-  
-  // this is responsible for enforcing the size of the queue
-  if (edge.size() >= size)
+  counter++;
+  if (v < vMin)
   {
-    edge.pop_front();
+    vMin = v;
   }
-  edge.push_back(v);
+  if (v > vMax)
+  {
+    vMax = v;
+  }
+
+  timetestPin = 1;
+  // apply first-order lag filter
+  vLag = (alpha) * v + (1-alpha) * vLag;
+  timetestPin = 0;
+
+  timetestPin = 1;
+  // apply rolling average normalisation
+  rollingAvg = (rollingAvg + vLag) / counter;
+  vNorm = vNorm + offset - rollingAvg;
+  timetestPin = 0;
+
+  timetestPin = 1;
+  // compute 8-step discretisation ladder
+  float qsize = (vMin-vMax)/8;
+  std::array<float, 7> qhigherbounds;
+  for (int i=0; i<=7; i++)
+  {
+    qhigherbounds[i] = vMin + (i+2)*qsize;
+  }
+
+  // apply 8-step discretisation
+  vDisc = 0;
+  for (int j=0; j<8; j++)
+  {
+    if (vNorm <= qhigherbounds[j])
+    {
+      vDisc = j+1;
+      break;
+    }
+  }
+  timetestPin = 0;
 }
 
 
 int main()
 {
+  timetestPin = 0;
   sampleTicker.attach(&sampler, 4200us); // 240 Hz sampling frequency
   
   serial.set_baud(9600);
@@ -66,36 +108,18 @@ int main()
 
   while(1)
   {  
-    // check if the data is ready to be processed and displayed
-    if (edge.size() == size)
-    {
-      std::copy(edge.begin(), edge.end(), edge.begin());
+    scopePin.write(vNorm);
+    printf("write:\t%f\n",
+      v
+    );
 
-      firstOrderLag(processing, 0.025);
-      rollingAvgNorm(processing);
+    float brightness = slider.readDistance();
+    printf("slider:\t%f\n",
+      brightness
+    );
 
-      float v = edge[size-1];
-      scopePin.write(v);
-      printf("write:\t%f\n",
-        v
-      );
-
-      std::copy(processing.begin(), processing.end(), processed.begin());
-
-      float brightness = slider.readDistance();
-      printf("slider:\t%f\n",
-        brightness
-      );
-
-      cfg.intensity = brightness;
-      display.init_display(cfg);
-    }
-
-    // otherwise show some filler display
-    else
-    {
-      // filler here
-    }
+    cfg.intensity = brightness;
+    display.init_display(cfg);
   }
 
   return 0;
