@@ -1,7 +1,7 @@
 #include <array>
 #include <numeric>
 
-const int size = 8; // multiple of 8
+const int size = 16;  // multiple of 8
 const int bsize = (int) size/2;
 const int osize = (int) size/8;
 
@@ -79,5 +79,6 @@ void aggregate(std::array<float, size> queue)
         break;
       }
     }
+    
   }
 }
