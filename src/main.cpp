@@ -46,29 +46,6 @@ void sampler()
   rollingAvg = (rollingAvg + vLag) / counter;
   vNorm = vLag + offset - rollingAvg;
   timetestPin = 0;
-
-  /*
-  timetestPin = 1;
-  // compute 8-step discretisation ladder
-  float qsize = (vMin-vMax)/8;
-  float* qhigherbounds[7];
-  for (int i=0; i<=7; i++)
-  {
-    qhigherbounds[i] = vMin + i*qsize;
-  }
-
-  // apply 8-step discretisation
-  vDisc = 0;
-  for (int j=0; j<8; j++)
-  {
-    if (vNorm <= qhigherbounds[j])
-    {
-      vDisc = j+1;
-      break;
-    }
-  }
-  timetestPin = 0;
-  */
 }
 
 
