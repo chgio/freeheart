@@ -1,7 +1,8 @@
 #include <mbed.h>
 #include <array>
 #include <nonstd/ring_span.hpp>
-#include <freeheart/dsp.h>
+#include <freeheart/dsp.hpp>
+#include <freeheart/displaymaps.hpp>
 #include <tsi_sensor.h>
 #include <max7219.h>
 
@@ -10,90 +11,76 @@ nonstd::ring_span<volatile float> edgeRing(edge.begin(), edge.end());
 std::array<float, size> processing;
 std::array<int, size> processed;
 
-char buffer[64] = {0};
-BufferedSerial serial(USBTX, USBRX);
-
 Ticker sampleTicker;
 AnalogIn sensorPin(PTB0);     // ADC pin
 AnalogOut scopePin(PTE30);    // DAC pin
-DigitalOut timetestPin(PTC1); // digital pin
 TSIAnalogSlider slider(PTB16, PTB17, 16);
 Max7219 display(PTD2, NC, PTD1, PTD0);
 
 
-// TODO verify consistency of front/back queuing with dsp iterators
-
 // sampling interrupt handler function
 void sampler()
 {
-  timetestPin = 1;
-  volatile float v = sensorPin.read();
-  timetestPin = 0;
-  
-  printf("read:\t%f\n",
-    v
-  );
-
-  edgeRing.push_back(v);
+    volatile float v = sensorPin.read();
+    edgeRing.push_back(v);
 }
 
 
 int main()
 {
-  sampleTicker.attach(&sampler, 4200us); // 240 Hz sampling frequency
-  
-  serial.set_baud(9600);
-  serial.set_format(
-    8,
-    BufferedSerial::None,
-    1
-  );
+    sampleTicker.attach(&sampler, 4200us); // 240 Hz sampling frequency
 
-  max7219_configuration_t cfg = {
-    .device_number = 1,
-    .decode_mode = 0,
-    .intensity = Max7219::MAX7219_INTENSITY_8,
-    .scan_limit = Max7219::MAX7219_SCAN_8
-  };
-  display.init_display(cfg);
-  display.enable_display();
-  display.set_display_test();
-  wait_us(10);
-  display.clear_display_test();
+    max7219_configuration_t cfg = {
+        .device_number = 1,
+        .decode_mode = 0,
+        .intensity = Max7219::MAX7219_INTENSITY_8,
+        .scan_limit = Max7219::MAX7219_SCAN_8
+    };
+    display.init_display(cfg);
+    display.enable_display();
+    display.set_display_test();
+    wait_us(10);
+    display.clear_display_test();
 
-  while(1)
-  {  
-    // check if the data is ready to be processed and displayed
-    if (edgeRing.size() == size)
+    while (1)
     {
-      std::copy(edgeRing.begin(), edgeRing.end(), processing.begin());
+        // check if the data is ready to be processed and displayed
+        if (edgeRing.size() == size)
+        {
+            std::copy(edgeRing.begin(), edgeRing.end(), processing.begin());
 
-      firstOrderLag(processing, 0.025);
-      rollingAvgNorm(processing);
+            firstOrderLag(processing, 0.15);
+            rollingAvgNorm(processing, 0);
+            aggregate(processing);
 
-      float v = edgeRing[size-1];
-      scopePin.write(v);
-      printf("write:\t%f\n",
-        v
-      );
+            float v = edgeRing[size - 1];
+            scopePin.write(v);
 
-      std::copy(processing.begin(), processing.end(), processed.begin());
+            std::copy(processing.begin(), processing.end(), processed.begin());
 
-      float brightness = slider.readDistance();
-      printf("slider:\t%f\n",
-        brightness
-      );
+            float bpmv = bpm(processing, 200, 0.3, 0.7);
 
-      cfg.intensity = brightness;
-      display.init_display(cfg);
+            float brightness = slider.readDistance();
+            printf("slider:\t%f\n",
+                   brightness);
+
+            cfg.intensity = brightness;
+            display.init_display(cfg);
+            display.enable_display();
+
+            for (int i=0; i<size; i++)
+            {
+                int d = processed[size-8+i];
+                display.write_digit(1, i, barmap.at(d));
+            }
+        }
+
+        // otherwise show some filler display
+        else
+        {
+            display.set_display_test();
+        }
     }
 
-    // otherwise show some filler display
-    else
-    {
-      // filler here
-    }
-  }
-
-  return 0;
+    return 0;
 }
